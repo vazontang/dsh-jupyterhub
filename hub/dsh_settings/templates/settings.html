@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH 設定</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#5d6675;--line:#dde1e7;--accent:#3554d1;--ok:#1f7a45}
+@media (prefers-color-scheme:dark){:root{--bg:#15171c;--card:#1d2027;--fg:#e7e9ee;--muted:#9aa3b2;--line:#323743;--accent:#7d95ff;--ok:#5cc489}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,"Noto Sans TC",sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 64px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{font-size:22px;margin:0}h2{font-size:17px;margin:0 0 4px}
+a{color:var(--accent)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-top:18px}
+.hint{color:var(--muted);font-size:13px;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px}
+label{display:block;font-size:13px;color:var(--muted)}
+input,select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);font:inherit}
+textarea{font-family:ui-monospace,monospace;font-size:12px;min-height:72px}
+.row{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:8px;margin-bottom:6px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+button{padding:7px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font:inherit;cursor:pointer}
+button.secondary{background:transparent;color:var(--accent)}
+.status{font-size:13px;color:var(--ok)}.msg{background:var(--card);border-left:4px solid var(--ok);padding:10px 14px;margin-top:16px}
+code.pub{display:block;word-break:break-all;font-size:12px;padding:8px;border:1px dashed var(--line);border-radius:6px;margin:8px 0}
+</style>
+</head>
+<body><main>
+<header><h1>DSH 設定 <small style="font-weight:400;color:var(--muted)">{{ user }}</small></h1><a href="{{ hub_home }}">回到 Hub</a></header>
+{% if msg %}<div class="msg">{{ msg }}</div>{% end %}
+
+<form class="card" method="post">{% module xsrf_form_html() %}<input type="hidden" name="section" value="ai">
+  <h2>AI 模型與 Git 身分</h2>
+  <p class="hint">API key 以 Hub 金鑰加密存放，server 啟動時注入成環境變數，不會寫進你的家目錄。</p>
+  <div class="grid">
+    <div><label>模式</label><select name="llm_mode">
+      <option value="deepseek" {% if s["llm_mode"]=="deepseek" %}selected{% end %}>DeepSeek 官方 API</option>
+      <option value="custom" {% if s["llm_mode"]=="custom" %}selected{% end %}>自訂（OpenAI / Anthropic 相容閘道）</option></select></div>
+    <div><label>模型</label><input name="llm_model" value="{{ s['llm_model'] }}"></div>
+    <div><label>API key（{{ mask(s["llm_api_key"]) }}）</label><input name="llm_api_key" type="password" autocomplete="off" placeholder="留空＝不變"></div>
+  </div>
+  <details style="margin-top:10px"><summary>自訂閘道設定</summary><div class="grid" style="margin-top:8px">
+    <div><label>Provider 名稱</label><input name="llm_provider" value="{{ s['llm_provider'] }}"></div>
+    <div><label>API 格式</label><select name="llm_api">
+      {% for a in ("openai-completions","openai-responses","anthropic-messages") %}<option {% if s["llm_api"]==a %}selected{% end %}>{{ a }}</option>{% end %}</select></div>
+    <div><label>Base URL</label><input name="llm_base_url" value="{{ s['llm_base_url'] }}" placeholder="https://gateway.example/v1"></div>
+  </div></details>
+  <div class="grid" style="margin-top:10px">
+    <div><label>Git 名稱</label><input name="git_name" value="{{ s['git_name'] }}"></div>
+    <div><label>Git Email</label><input name="git_email" value="{{ s['git_email'] }}"></div>
+  </div>
+  <div class="actions"><button>儲存</button><button name="restart" value="1" class="secondary">儲存並重啟 server</button>
+    <label style="display:inline"><input type="checkbox" name="llm_api_key_clear" value="1" style="width:auto"> 清除 API key</label></div>
+</form>
+
+{% set titles = {"git": "Git HTTPS 憑證（PAT）", "registry": "Container registry", "helm": "Helm repo", "ssh": "Git SSH 金鑰"} %}
+<p class="hint" style="margin-top:22px">以下憑證只寫進 Vault，Hub 不保存也讀不回來。每次儲存會<strong>整組取代</strong>該類別。server 啟動時由 init container 取到記憶體（/run/user-secrets），不落地到磁碟。</p>
+
+<form class="card" method="post">{% module xsrf_form_html() %}<input type="hidden" name="section" value="git">
+  <h2>{{ titles["git"] }}</h2>
+  <p class="status">{% if "git" in s["vault"] %}已設定：{{ s["vault"]["git"]["summary"] }}{% else %}未設定{% end %}</p>
+  {% for i in range(3) %}<div class="row" style="--n:3"><input name="git_host_{{i}}" placeholder="主機，例如 github.com"><input name="git_user_{{i}}" placeholder="帳號"><input name="git_token_{{i}}" type="password" autocomplete="off" placeholder="PAT"></div>{% end %}
+  <div class="actions"><button>儲存</button><button name="restart" value="1" class="secondary">儲存並重啟 server</button></div>
+</form>
+
+<form class="card" method="post">{% module xsrf_form_html() %}<input type="hidden" name="section" value="registry">
+  <h2>{{ titles["registry"] }}</h2>
+  <p class="status">{% if "registry" in s["vault"] %}已設定：{{ s["vault"]["registry"]["summary"] }}{% else %}未設定{% end %}</p>
+  {% for i in range(3) %}<div class="row" style="--n:3"><input name="reg_server_{{i}}" placeholder="registry，例如 harbor.corp"><input name="reg_user_{{i}}" placeholder="帳號"><input name="reg_password_{{i}}" type="password" autocomplete="off" placeholder="密碼 / token"></div>{% end %}
+  <div class="actions"><button>儲存</button><button name="restart" value="1" class="secondary">儲存並重啟 server</button></div>
+</form>
+
+<form class="card" method="post">{% module xsrf_form_html() %}<input type="hidden" name="section" value="helm">
+  <h2>{{ titles["helm"] }}</h2>
+  <p class="status">{% if "helm" in s["vault"] %}已設定：{{ s["vault"]["helm"]["summary"] }}{% else %}未設定{% end %}</p>
+  <label>HTTP chart repo</label>
+  {% for i in range(3) %}<div class="row" style="--n:4"><input name="helm_name_{{i}}" placeholder="名稱"><input name="helm_url_{{i}}" placeholder="https://charts.corp"><input name="helm_user_{{i}}" placeholder="帳號"><input name="helm_password_{{i}}" type="password" autocomplete="off" placeholder="密碼"></div>{% end %}
+  <label>OCI registry（helm registry login）</label>
+  {% for i in range(3) %}<div class="row" style="--n:3"><input name="helmoci_server_{{i}}" placeholder="harbor.corp"><input name="helmoci_user_{{i}}" placeholder="帳號"><input name="helmoci_password_{{i}}" type="password" autocomplete="off" placeholder="密碼"></div>{% end %}
+  <div class="actions"><button>儲存</button><button name="restart" value="1" class="secondary">儲存並重啟 server</button></div>
+</form>
+
+<form class="card" method="post">{% module xsrf_form_html() %}<input type="hidden" name="section" value="ssh">
+  <h2>{{ titles["ssh"] }}</h2>
+  {% if s["ssh_public_key"] %}<p class="hint">把這把公鑰加到 Git 伺服器（GitHub / GitLab → SSH keys）：</p><code class="pub">{{ s["ssh_public_key"] }}</code>{% else %}<p class="status">未設定</p>{% end %}
+  <label>known_hosts（選填，建議貼上公司 Git 主機的 host key）</label><textarea name="known_hosts" placeholder="gitlab.corp ssh-ed25519 AAAA..."></textarea>
+  <label style="margin-top:8px">上傳既有私鑰（選填，未加密的 OpenSSH 格式）</label><textarea name="private_key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+  <div class="actions"><button name="action" value="generate">產生新金鑰（ed25519）</button><button name="action" value="upload" class="secondary">使用上傳的私鑰</button></div>
+</form>
+
+<form class="card" method="post">{% module xsrf_form_html() %}<input type="hidden" name="section" value="clear">
+  <h2>刪除 Vault 中的憑證</h2>
+  <div class="actions">{% for k in kinds %}<button name="kind" value="{{ k }}" class="secondary">刪除 {{ titles[k] }}</button>{% end %}</div>
+</form>
+</main></body></html>

@@ -1,0 +1,8 @@
+# /etc/gitconfig — system level, so nothing secret is written to the home volume.
+# Credentials live in tmpfs /run/user-secrets (filled by the vault-fetch init container).
+[credential]
+	helper = store --file=/run/user-secrets/git-credentials
+[core]
+	sshCommand = ssh -F /etc/ssh/ssh_config
+[init]
+	defaultBranch = main
