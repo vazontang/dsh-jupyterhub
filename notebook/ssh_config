@@ -1,0 +1,6 @@
+# Git SSH identity from tmpfs; known_hosts managed by the platform (Vault ssh/known_hosts)
+Host *
+    IdentityFile /run/user-secrets/ssh/id_ed25519
+    IdentitiesOnly yes
+    UserKnownHostsFile /run/user-secrets/ssh/known_hosts ~/.ssh/known_hosts
+    StrictHostKeyChecking accept-new

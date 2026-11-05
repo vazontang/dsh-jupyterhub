@@ -1,0 +1,126 @@
+# Zero to JupyterHub 4.4.4 values for the DSH PoC (single-node k3s).
+# Replace: jhub.example.com, sso.example.com/realms/corp, <KEYCLOAK_CLIENT_SECRET>.
+# Secrets created by install.sh: jhub-crypt (JUPYTERHUB_CRYPT_KEY), jhub-oidc (client secret).
+
+proxy:
+  service:
+    type: NodePort
+    nodePorts:
+      http: 30080            # OpenResty on the host -> 127.0.0.1:30080
+  https:
+    enabled: false           # TLS terminates at OpenResty
+
+hub:
+  image:
+    name: jhub-dsh           # hub/Dockerfile (k8s-hub + dsh_settings)
+    tag: poc
+    pullPolicy: IfNotPresent
+  config:
+    JupyterHub:
+      authenticator_class: generic-oauth
+    GenericOAuthenticator:
+      client_id: jupyterhub
+      oauth_callback_url: https://jhub.example.com/hub/oauth_callback
+      authorize_url: https://sso.example.com/realms/corp/protocol/openid-connect/auth
+      token_url: https://sso.example.com/realms/corp/protocol/openid-connect/token
+      userdata_url: https://sso.example.com/realms/corp/protocol/openid-connect/userinfo
+      logout_redirect_url: https://sso.example.com/realms/corp/protocol/openid-connect/logout
+      login_service: Keycloak
+      scope: [openid, profile, email]
+      username_claim: preferred_username
+      claim_groups_key: groups
+      allowed_groups: [dsh-users]
+      admin_groups: [dsh-admins]
+      manage_groups: true
+      enable_auth_state: true      # keeps the Keycloak access token for vault-fetch
+      refresh_pre_spawn: true      # fresh access token right before each spawn
+      auth_refresh_age: 60
+  extraEnv:
+    JUPYTERHUB_CRYPT_KEY:
+      valueFrom: {secretKeyRef: {name: jhub-crypt, key: key}}
+    GenericOAuthenticator_client_secret:   # read in extraConfig below
+      valueFrom: {secretKeyRef: {name: jhub-oidc, key: client_secret}}
+    DSH_SETTINGS_DB: /srv/jupyterhub/dsh-settings.sqlite
+    DSH_VAULT_ADDR: http://openbao.openbao.svc:8200
+    DSH_VAULT_FETCH_IMAGE: vault-fetch:poc
+  service:
+    extraPorts:
+      - {name: dsh-settings, port: 10101, targetPort: 10101}
+  networkPolicy:
+    ingress:
+      - ports: [{port: 10101}]       # proxy pod -> settings service
+        from:
+          - podSelector:
+              matchLabels: {hub.jupyter.org/network-access-hub: "true"}
+    egressAllowRules:
+      privateIPs: true               # OpenBao (cluster IP) and Keycloak (if internal)
+  loadRoles:
+    dsh-settings:
+      services: [dsh-settings]
+      scopes: [servers, "read:users:name"]
+    user:
+      scopes: [self, "access:services!service=dsh-settings"]
+  extraConfig:
+    10-oidc-secret: |
+      import os
+      c.GenericOAuthenticator.client_secret = os.environ["GenericOAuthenticator_client_secret"]
+    20-dsh: |
+      import os, sys
+      from dsh_settings.spawn import pre_spawn_hook
+      c.Spawner.pre_spawn_hook = pre_spawn_hook
+      c.JupyterHub.services.append({
+          "name": "dsh-settings",
+          "display": True,
+          "url": "http://hub:10101",
+          "command": [sys.executable, "-m", "dsh_settings"],
+          "oauth_no_confirm": True,
+          "environment": {
+              "PYTHONPATH": "/opt/dsh-hub",
+              "DSH_SETTINGS_BIND": "0.0.0.0",
+              "DSH_SETTINGS_DB": os.environ["DSH_SETTINGS_DB"],
+              "JUPYTERHUB_CRYPT_KEY": os.environ["JUPYTERHUB_CRYPT_KEY"],
+              "VAULT_ADDR": os.environ["DSH_VAULT_ADDR"],
+              "VAULT_K8S_ROLE": "dsh-settings",
+          },
+      })
+
+singleuser:
+  image:
+    name: dsh-notebook        # notebook/Dockerfile
+    tag: poc
+    pullPolicy: IfNotPresent
+  defaultUrl: /lab
+  cpu: {limit: 2, guarantee: 0.5}
+  memory: {limit: 4G, guarantee: 1G}
+  storage:
+    type: dynamic
+    capacity: 20Gi
+    dynamic:
+      storageClass: local-path    # k3s default; NFS/Longhorn when adding nodes
+    extraVolumes:
+      - name: user-secrets
+        emptyDir: {medium: Memory, sizeLimit: 16Mi}   # tmpfs, gone when the pod stops
+    extraVolumeMounts:
+      - name: user-secrets
+        mountPath: /run/user-secrets
+  extraEnv:
+    DSH_PUBLIC_HOST: jhub.example.com   # must equal the browser's Host (add :port if not 443)
+    DSH_PUBLIC_SCHEME: https
+  networkPolicy:
+    egressAllowRules:
+      privateIPs: true    # internal Git / registry / chart repo / OpenBao for vault-fetch
+  startTimeout: 300
+
+scheduling:
+  userScheduler: {enabled: false}   # single node
+  podPriority: {enabled: false}
+  userPlaceholder: {enabled: false}
+
+prePuller:
+  hook: {enabled: false}            # images are imported into k3s directly
+  continuous: {enabled: false}
+
+cull:
+  enabled: true
+  timeout: 28800        # 8h idle
+  every: 600

@@ -1,0 +1,5 @@
+# Each user may read only their own secrets: secret/users/<preferred_username>/*
+# setup-openbao.sh fills in the jwt auth mount accessor below.
+path "secret/data/users/{{identity.entity.aliases.__JWT_ACCESSOR__.name}}/*" {
+  capabilities = ["read"]
+}
